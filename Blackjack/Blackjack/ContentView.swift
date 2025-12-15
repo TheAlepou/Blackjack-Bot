@@ -98,6 +98,14 @@ struct Hand: CustomStringConvertible {
     var description: String { cards.map { $0.description }.joined(separator: " ") }
 }
 
+// MARK: - Modes
+
+enum GameMode: String, CaseIterable, Identifiable {
+    case blackjack = "Blackjack"
+    case counting = "Card Counting Trainer"
+    var id: String { rawValue }
+}
+
 // MARK: - Game State
 
 enum Outcome: String {
@@ -148,89 +156,193 @@ struct ContentView: View {
     // Control state
     @State private var outcome: Outcome = .none
     @State private var playerStood: Bool = false
+
+    // App mode
+    @State private var mode: GameMode = .blackjack
+
+    // Counting trainer state
+    @State private var countingDeck = Deck()
+    @State private var shownCards: [Card] = []
+    @State private var runningCount: Int = 0
+    @State private var revealRunningCount: Bool = false
+    @State private var guessText: String = ""
+    @State private var guessFeedback: String? = nil
+
+    // Instructions sheet
+    @State private var showInstructions: Bool = false
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                // Dealer section
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Dealer")
-                        .font(.headline)
-                    HStack(spacing: 8) {
-                        if dealer.cards.indices.contains(0) {
-                            CardView(card: dealer.cards[0])
-                        }
-                        if shouldHideDealerHoleCard {
-                            HiddenCardView()
-                        } else if dealer.cards.indices.contains(1) {
-                            CardView(card: dealer.cards[1])
-                        }
-                        // Any additional dealer cards beyond the first two
-                        if dealer.cards.count > 2 {
-                            ForEach(dealer.cards.dropFirst(2)) { card in
-                                CardView(card: card)
-                            }
-                        }
+            VStack(alignment: .leading, spacing: 16) {
+                Picker("Mode", selection: $mode) {
+                    ForEach(GameMode.allCases) { m in
+                        Text(m.rawValue).tag(m)
                     }
-                    .accessibilityLabel(dealerAccessibilityLabel)
+                }
+                .pickerStyle(.segmented)
 
-                    HStack {
-                        Text("Total:")
-                            .foregroundStyle(.secondary)
-                        Text(shouldHideDealerHoleCard ? "?" : "\(dealer.value)")
-                            .font(.title3).bold()
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                
-                Divider()
-                
-                // Player section
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Player")
-                        .font(.headline)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(player.cards) { card in
-                                CardView(card: card)
+                if mode == .blackjack {
+                    // Existing Blackjack UI
+                    VStack(spacing: 24) {
+                        // Dealer section
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Dealer")
+                                .font(.headline)
+                            HStack(spacing: 8) {
+                                if dealer.cards.indices.contains(0) {
+                                    CardView(card: dealer.cards[0])
+                                }
+                                if shouldHideDealerHoleCard {
+                                    HiddenCardView()
+                                } else if dealer.cards.indices.contains(1) {
+                                    CardView(card: dealer.cards[1])
+                                }
+                                // Any additional dealer cards beyond the first two
+                                if dealer.cards.count > 2 {
+                                    ForEach(dealer.cards.dropFirst(2)) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            .accessibilityLabel(dealerAccessibilityLabel)
+
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text(shouldHideDealerHoleCard ? "?" : "\(dealer.value)")
+                                    .font(.title3).bold()
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        Divider()
+                        
+                        // Player section
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Player")
+                                .font(.headline)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(player.cards) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text("\(player.value)")
+                                    .font(.title3).bold()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        // Status
+                        Text(statusText)
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(statusColor)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 8)
+                        
+                        // Controls
+                        HStack(spacing: 16) {
+                            Button("Hit", action: hit)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!canAct)
+                            Button("Stand", action: stand)
+                                .buttonStyle(.bordered)
+                                .disabled(!canAct)
+                            Button("New Round", action: newRound)
+                                .buttonStyle(.bordered)
+                        }
+                        .padding(.top, 4)
+                        
+                        Spacer()
                     }
-                    HStack {
-                        Text("Total:")
-                            .foregroundStyle(.secondary)
-                        Text("\(player.value)")
-                            .font(.title3).bold()
+                } else {
+                    // Card Counting Trainer UI
+                    VStack(spacing: 16) {
+                        Text("Card Counting Trainer (Hi-Lo)")
+                            .font(.title2).bold()
+
+                        // Shown cards
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(shownCards) { card in
+                                    CardView(card: card)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Controls for trainer
+                        HStack(spacing: 12) {
+                            Button(action: nextCountingCard) {
+                                Label("Next Card", systemImage: "forward.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(countingDeck.isEmpty)
+
+                            Button(action: resetCounting) {
+                                Label("Reset", systemImage: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        // Guessing UI
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Your Guess for Running Count")
+                                .font(.headline)
+                            HStack {
+                                TextField("e.g. 0", text: $guessText)
+                                #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+                                    .keyboardType(.numbersAndPunctuation)
+                                #endif
+                                .textFieldStyle(.roundedBorder)
+                                Button("Check", action: checkGuess)
+                            }
+                            if let feedback = guessFeedback {
+                                Text(feedback)
+                                    .font(.subheadline)
+                                    .foregroundStyle(feedback.hasPrefix("Correct") ? .green : .red)
+                            }
+                        }
+
+                        Toggle(isOn: $revealRunningCount) {
+                            Text("Reveal Running Count")
+                        }
+                        if revealRunningCount {
+                            Text("Running Count: \(runningCount)")
+                                .font(.title3).bold()
+                        }
+
+                        Spacer()
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                
-                // Status
-                Text(statusText)
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(statusColor)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 8)
-                
-                // Controls
-                HStack(spacing: 16) {
-                    Button("Hit", action: hit)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canAct)
-                    Button("Stand", action: stand)
-                        .buttonStyle(.bordered)
-                        .disabled(!canAct)
-                    Button("New Round", action: newRound)
-                        .buttonStyle(.bordered)
-                }
-                .padding(.top, 4)
-                
-                Spacer()
             }
             .padding()
             .navigationTitle("Blackjack")
             .onAppear(perform: newRound)
+            .toolbar {
+                #if os(iOS) || os(visionOS) || os(tvOS) || os(watchOS)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Instructions") { showInstructions = true }
+                }
+
+                #elseif os(macOS)
+                ToolbarItem(placement: .automatic) {
+                    Button("Instructions") { showInstructions = true }
+                }
+                #else
+                ToolbarItem(placement: .automatic) {
+                    Button("Instructions") { showInstructions = true }
+                }
+                #endif
+            }
+            .sheet(isPresented: $showInstructions) {
+                InstructionsView()
+            }
         }
     }
     
@@ -324,6 +436,48 @@ struct ContentView: View {
         // Optional: if both have blackjack, it's a push; if player has blackjack and dealer doesn't, player wins when standing
         // Keep round open so player can choose to Stand or Hit; no automatic resolution here.
     }
+
+    // MARK: - Counting Trainer Actions
+
+    private func resetCounting() {
+        countingDeck = Deck()
+        shownCards = []
+        runningCount = 0
+        revealRunningCount = false
+        guessText = ""
+        guessFeedback = nil
+    }
+
+    private func nextCountingCard() {
+        guard let card = countingDeck.deal() else { return }
+        shownCards.append(card)
+        runningCount += hiLoValue(for: card)
+    }
+
+    private func checkGuess() {
+        let trimmed = guessText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let guess = Int(trimmed) {
+            if guess == runningCount {
+                guessFeedback = "Correct! Running count is \(runningCount)."
+            } else {
+                let hint = runningCount > guess ? "higher" : "lower"
+                guessFeedback = "Not quite. Try \(hint)."
+            }
+        } else {
+            guessFeedback = "Please enter a valid integer."
+        }
+    }
+
+    private func hiLoValue(for card: Card) -> Int {
+        switch card.rank {
+        case .two, .three, .four, .five, .six:
+            return 1
+        case .seven, .eight, .nine:
+            return 0
+        default: // 10, J, Q, K, A
+            return -1
+        }
+    }
 }
 
 // MARK: - UI Components
@@ -365,6 +519,62 @@ private struct HiddenCardView: View {
             .overlay(Text("🂠").font(.title))
             .frame(width: 56, height: 80)
             .accessibilityLabel("Hidden card")
+    }
+}
+
+private struct InstructionsView: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Group {
+                        Text("Welcome to Blackjack")
+                            .font(.title2).bold()
+                        Text("Goal: Get as close to 21 as possible without going over. Face cards are 10, Aces are 11 or 1. Dealer hits until 17.")
+                        Text("Your Turn:")
+                            .font(.headline)
+                        Text("- Hit: Take another card.\n- Stand: Stop taking cards.\n- Blackjack: An Ace + a 10-value card on the initial deal (21).\n- Bust: If your total exceeds 21, you lose.")
+                    }
+
+                    Divider()
+
+                    Group {
+                        Text("Card Counting (Hi-Lo)")
+                            .font(.title2).bold()
+                        Text("Hi-Lo assigns values to track whether the remaining deck is rich in high or low cards:")
+                        Text("- 2–6: +1\n- 7–9: 0\n- 10, J, Q, K, A: −1")
+                        Text("Running Count: Start at 0. Add the value of each revealed card as it appears. A higher running count means more high cards remain in the deck, which generally favors the player.")
+                        Text("Trainer Tips:")
+                            .font(.headline)
+                        Text("- Tap ‘Next Card’ to reveal cards one by one.\n- Enter your current running count guess and tap ‘Check’.\n- Toggle ‘Reveal Running Count’ to verify at any time.\n- Tap ‘Reset’ to reshuffle and start over.")
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Instructions")
+            .toolbar {
+                #if os(iOS) || os(visionOS) || os(tvOS) || os(watchOS)
+                ToolbarItem(placement: .topBarTrailing) {
+                    CloseSheetButton()
+                }
+                #elseif os(macOS)
+                ToolbarItem(placement: .automatic) {
+                    CloseSheetButton()
+                }
+                #else
+                ToolbarItem(placement: .automatic) {
+                    CloseSheetButton()
+                }
+                #endif
+            }
+        }
+    }
+}
+
+private struct CloseSheetButton: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        Button("Done") { dismiss() }
     }
 }
 
