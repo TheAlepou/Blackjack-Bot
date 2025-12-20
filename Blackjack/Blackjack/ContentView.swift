@@ -102,6 +102,8 @@ struct Hand: CustomStringConvertible {
 
 enum GameMode: String, CaseIterable, Identifiable {
     case blackjack = "Blackjack"
+    case pvp = "2 Players Mode"
+    case headToHead = "Player vs Dealer (Local)"
     case counting = "Card Counting Trainer"
     var id: String { rawValue }
 }
@@ -114,6 +116,7 @@ enum Outcome: String {
     case dealerBust = "Dealer busts"
     case playerWins = "Player wins"
     case dealerWins = "Dealer wins"
+    case dealerMustPush = "Dealer must push"
     case push = "Push"
 }
 
@@ -167,6 +170,28 @@ struct ContentView: View {
     @State private var revealRunningCount: Bool = false
     @State private var guessText: String = ""
     @State private var guessFeedback: String? = nil
+
+    // PvP state
+    private enum PlayerTurn { case player1, player2 }
+    @State private var pvpDeck = Deck()
+    @State private var pvpDealer = Hand()
+    @State private var p1 = Hand()
+    @State private var p2 = Hand()
+    @State private var p1Outcome: Outcome = .none
+    @State private var p2Outcome: Outcome = .none
+    @State private var p1Stood: Bool = false
+    @State private var p2Stood: Bool = false
+    @State private var currentTurn: PlayerTurn = .player1
+
+    // Head-to-head (Player vs Dealer) state
+    private enum H2HTurn { case player, dealer }
+    @State private var h2hDeck = Deck()
+    @State private var h2hPlayer = Hand()
+    @State private var h2hDealer = Hand()
+    @State private var h2hOutcome: Outcome = .none
+    @State private var h2hPlayerStood: Bool = false
+    @State private var h2hDealerStood: Bool = false
+    @State private var h2hTurn: H2HTurn = .player
 
     // Instructions sheet
     @State private var showInstructions: Bool = false
@@ -260,6 +285,229 @@ struct ContentView: View {
                         
                         Spacer()
                     }
+                } else if mode == .pvp {
+                    // Local PvP UI
+                    VStack(spacing: 24) {
+                        // Dealer section
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Dealer")
+                                .font(.headline)
+                            HStack(spacing: 8) {
+                                if pvpDealer.cards.indices.contains(0) {
+                                    CardView(card: pvpDealer.cards[0])
+                                }
+                                if pvpShouldHideDealerHoleCard {
+                                    HiddenCardView()
+                                } else if pvpDealer.cards.indices.contains(1) {
+                                    CardView(card: pvpDealer.cards[1])
+                                }
+                                if pvpDealer.cards.count > 2 {
+                                    ForEach(pvpDealer.cards.dropFirst(2)) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            .accessibilityLabel(pvpDealerAccessibilityLabel)
+
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text(pvpShouldHideDealerHoleCard ? "?" : "\(pvpDealer.value)")
+                                    .font(.title3).bold()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Divider()
+
+                        // Player 1
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Player 1")
+                                    .font(.headline)
+                                if currentTurn == .player1 && p1Outcome == .none && !p1Stood {
+                                    Text("(Your turn)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(p1.cards) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text("\(p1.value)")
+                                    .font(.title3).bold()
+                            }
+                            if p1Outcome != .none {
+                                Text(p1Outcome.rawValue)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(color(for: p1Outcome))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Player 2
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Player 2")
+                                    .font(.headline)
+                                if currentTurn == .player2 && p2Outcome == .none && !p2Stood {
+                                    Text("(Your turn)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(p2.cards) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text("\(p2.value)")
+                                    .font(.title3).bold()
+                            }
+                            if p2Outcome != .none {
+                                Text(p2Outcome.rawValue)
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(color(for: p2Outcome))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Status
+                        Text(pvpStatusText)
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 8)
+
+                        // Controls
+                        HStack(spacing: 16) {
+                            Button("Hit", action: pvpHit)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!pvpCanAct)
+                            Button("Stand", action: pvpStand)
+                                .buttonStyle(.bordered)
+                                .disabled(!pvpCanAct)
+                            Button("New Round", action: pvpNewRound)
+                                .buttonStyle(.bordered)
+                        }
+                        .padding(.top, 4)
+
+                        Spacer()
+                    }
+                } else if mode == .headToHead {
+                    // Head-to-Head Local mode
+                    VStack(spacing: 24) {
+                        // Dealer section
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Dealer")
+                                    .font(.headline)
+                                if h2hTurn == .dealer && h2hOutcome == .none && !h2hDealerStood {
+                                    Text("(Your turn)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            HStack(spacing: 8) {
+                                if h2hDealer.cards.indices.contains(0) {
+                                    CardView(card: h2hDealer.cards[0])
+                                }
+                                if h2hShouldHideDealerHoleCard {
+                                    HiddenCardView()
+                                } else if h2hDealer.cards.indices.contains(1) {
+                                    CardView(card: h2hDealer.cards[1])
+                                }
+                                if h2hDealer.cards.count > 2 {
+                                    ForEach(h2hDealer.cards.dropFirst(2)) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            .accessibilityLabel(h2hDealerAccessibilityLabel)
+
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text(h2hShouldHideDealerHoleCard ? "?" : "\(h2hDealer.value)")
+                                    .font(.title3).bold()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Player section
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Player")
+                                    .font(.headline)
+                                if h2hTurn == .player && h2hOutcome == .none && !h2hPlayerStood {
+                                    Text("(Your turn)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(h2hPlayer.cards) { card in
+                                        CardView(card: card)
+                                    }
+                                }
+                            }
+                            HStack {
+                                Text("Total:")
+                                    .foregroundStyle(.secondary)
+                                Text("\(h2hPlayer.value)")
+                                    .font(.title3).bold()
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Status
+                        Text(h2hStatusText)
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(color(for: h2hOutcome))
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 8)
+
+                        // Controls
+                        VStack(spacing: 8) {
+                            HStack(spacing: 16) {
+                                Button("Player Hit", action: h2hPlayerHit)
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(!h2hPlayerCanAct)
+                                Button("Player Stand", action: h2hPlayerStand)
+                                    .buttonStyle(.bordered)
+                                    .disabled(!h2hPlayerCanAct)
+                            }
+                            HStack(spacing: 16) {
+                                Button("Dealer Hit", action: h2hDealerHit)
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(!h2hDealerCanAct)
+                                Button("Dealer Stand", action: h2hDealerStand)
+                                    .buttonStyle(.bordered)
+                                    .disabled(!h2hDealerCanAct)
+                            }
+                            Button("New Round", action: h2hNewRound)
+                                .buttonStyle(.bordered)
+                                .padding(.top, 4)
+                        }
+
+                        Spacer()
+                    }
                 } else {
                     // Card Counting Trainer UI
                     VStack(spacing: 16) {
@@ -322,8 +570,26 @@ struct ContentView: View {
                 }
             }
             .padding()
-            .navigationTitle("Blackjack")
-            .onAppear(perform: newRound)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Blackjack").font(.headline)
+                    // OR your segmented control if you keep it there
+                }
+            }            .onAppear(perform: newRound)
+            .onChange(of: mode) { newMode in
+                switch newMode {
+                case .blackjack:
+                    newRound()
+                case .pvp:
+                    pvpNewRound()
+                case .headToHead:
+                    h2hNewRound()
+                case .counting:
+                    resetCounting()
+                }
+            }
             .toolbar {
                 #if os(iOS) || os(visionOS) || os(tvOS) || os(watchOS)
                 ToolbarItem(placement: .topBarTrailing) {
@@ -352,6 +618,11 @@ struct ContentView: View {
         outcome == .none && !playerStood
     }
     
+    private var dealerMustPush: Bool {
+        // Dealer must push means dealer total < 17
+        Blackjack.dealerShouldDraw(dealer.cards)
+    }
+    
     private var canAct: Bool {
         outcome == .none
     }
@@ -365,6 +636,7 @@ struct ContentView: View {
         case .playerWins: return Outcome.playerWins.rawValue
         case .dealerWins: return Outcome.dealerWins.rawValue
         case .push: return Outcome.push.rawValue
+        case .dealerMustPush: return Outcome.dealerMustPush.rawValue
         }
     }
     
@@ -374,6 +646,8 @@ struct ContentView: View {
         case .playerWins, .dealerBust: return .green
         case .dealerWins, .playerBust: return .red
         case .push: return .orange
+        case .dealerMustPush:
+            return .gray
         }
     }
     
@@ -383,6 +657,95 @@ struct ContentView: View {
             return "Dealer showing \(first). Hidden hole card."
         } else {
             return "Dealer hand: \(dealer.description). Total \(dealer.value)."
+        }
+    }
+    
+    private func color(for outcome: Outcome) -> Color {
+        switch outcome {
+        case .none: return .primary
+        case .playerWins, .dealerBust: return .green
+        case .dealerWins, .playerBust: return .red
+        case .push: return .orange
+        case .dealerMustPush:
+            return .gray
+        }
+    }
+
+    private var pvpShouldHideDealerHoleCard: Bool {
+        !( (p1Stood || p1Outcome != .none) && (p2Stood || p2Outcome != .none) )
+    }
+
+    private var pvpCanAct: Bool {
+        switch currentTurn {
+        case .player1:
+            return p1Outcome == .none && !p1Stood
+        case .player2:
+            return p2Outcome == .none && !p2Stood
+        }
+    }
+
+    private var pvpDealerMustPush: Bool {
+        Blackjack.dealerShouldDraw(pvpDealer.cards)
+    }
+
+    private var pvpStatusText: String {
+        let bothFinished = (p1Stood || p1Outcome != .none) && (p2Stood || p2Outcome != .none)
+        if bothFinished {
+            return "Round complete"
+        }
+        switch currentTurn {
+        case .player1:
+            return p1.isBlackjack && !p1Stood ? "Player 1: Blackjack! Stand or Hit?" : "Player 1's move"
+        case .player2:
+            return p2.isBlackjack && !p2Stood ? "Player 2: Blackjack! Stand or Hit?" : "Player 2's move"
+        }
+    }
+
+    private var pvpDealerAccessibilityLabel: String {
+        if pvpShouldHideDealerHoleCard {
+            let first = pvpDealer.cards.first.map { $0.description } ?? ""
+            return "Dealer showing \(first). Hidden hole card."
+        } else {
+            return "Dealer hand: \(pvpDealer.description). Total \(pvpDealer.value)."
+        }
+    }
+    
+    // Head-to-head derived UI
+    private var h2hShouldHideDealerHoleCard: Bool {
+        h2hOutcome == .none && h2hTurn == .player && !h2hDealerStood
+    }
+
+    private var h2hPlayerCanAct: Bool {
+        h2hOutcome == .none && h2hTurn == .player && !h2hPlayerStood
+    }
+
+    private var h2hDealerCanAct: Bool {
+        h2hOutcome == .none && h2hTurn == .dealer && !h2hDealerStood
+    }
+    
+    private var h2hDealerMustPush: Bool {
+        Blackjack.dealerShouldDraw(h2hDealer.cards)
+    }
+
+    private var h2hStatusText: String {
+        switch h2hOutcome {
+        case .none:
+            if h2hTurn == .player {
+                return h2hPlayer.isBlackjack && !h2hPlayerStood ? "Player: Blackjack! Stand or Hit?" : "Player's move"
+            } else {
+                return h2hDealer.isBlackjack && !h2hDealerStood ? "Dealer: Blackjack! Stand or Hit?" : "Dealer's move"
+            }
+        default:
+            return h2hOutcome.rawValue
+        }
+    }
+
+    private var h2hDealerAccessibilityLabel: String {
+        if h2hShouldHideDealerHoleCard {
+            let first = h2hDealer.cards.first.map { $0.description } ?? ""
+            return "Dealer showing \(first). Hidden hole card."
+        } else {
+            return "Dealer hand: \(h2hDealer.description). Total \(h2hDealer.value)."
         }
     }
     
@@ -417,8 +780,12 @@ struct ContentView: View {
     private func stand() {
         guard outcome == .none else { return }
         playerStood = true
-        dealerPlay()
-        settle()
+        // Do not resolve while dealer must push (dealer total < 17)
+        if dealerMustPush {
+            dealerPlay()
+            settle()
+            return
+        }
     }
     
     private func dealerPlay() {
@@ -476,6 +843,161 @@ struct ContentView: View {
             return 0
         default: // 10, J, Q, K, A
             return -1
+        }
+    }
+
+    // MARK: - PvP Actions
+
+    private func pvpNewRound() {
+        pvpDeck = Deck()
+        p1 = Hand()
+        p2 = Hand()
+        pvpDealer = Hand()
+        p1Outcome = .none
+        p2Outcome = .none
+        p1Stood = false
+        p2Stood = false
+        currentTurn = .player1
+
+        // Initial deal: P1, P2, Dealer, P1, P2, Dealer
+        if let c1 = pvpDeck.deal() { p1.add(c1) }
+        if let c2 = pvpDeck.deal() { p2.add(c2) }
+        if let d1 = pvpDeck.deal() { pvpDealer.add(d1) }
+        if let c3 = pvpDeck.deal() { p1.add(c3) }
+        if let c4 = pvpDeck.deal() { p2.add(c4) }
+        if let d2 = pvpDeck.deal() { pvpDealer.add(d2) }
+    }
+
+    private func pvpHit() {
+        guard pvpCanAct, let card = pvpDeck.deal() else { return }
+        switch currentTurn {
+        case .player1:
+            p1.add(card)
+            if p1.isBusted {
+                p1Outcome = .playerBust
+                p1Stood = true
+                pvpAdvanceTurnOrFinish()
+            }
+        case .player2:
+            p2.add(card)
+            if p2.isBusted {
+                p2Outcome = .playerBust
+                p2Stood = true
+                pvpAdvanceTurnOrFinish()
+            }
+        }
+    }
+
+    private func pvpStand() {
+        guard pvpCanAct else { return }
+        switch currentTurn {
+        case .player1:
+            p1Stood = true
+        case .player2:
+            p2Stood = true
+        }
+        pvpAdvanceTurnOrFinish()
+    }
+
+    private func pvpAdvanceTurnOrFinish() {
+        switch currentTurn {
+        case .player1:
+            currentTurn = .player2
+            if p2Stood || p2Outcome != .none {
+                pvpFinishRoundIfNeeded()
+            }
+        case .player2:
+            pvpFinishRoundIfNeeded()
+        }
+    }
+
+    private func pvpFinishRoundIfNeeded() {
+        // Do not finish while dealer must push (dealer total < 17)
+        if dealerMustPush {
+            dealerPlay()
+            settle()
+            return
+        }
+        let p1Done = p1Stood || p1Outcome != .none
+        let p2Done = p2Stood || p2Outcome != .none
+        guard p1Done && p2Done else { return }
+        if !(p1Outcome == .playerBust && p2Outcome == .playerBust) {
+            pvpDealerPlay()
+        }
+        pvpSettle()
+    }
+
+    private func pvpDealerPlay() {
+        while Blackjack.dealerShouldDraw(pvpDealer.cards), let card = pvpDeck.deal() {
+            pvpDealer.add(card)
+        }
+    }
+
+    private func pvpSettle() {
+        if p1Outcome == .none {
+            p1Outcome = Blackjack.resolveOutcome(player: p1.cards, dealer: pvpDealer.cards)
+        }
+        if p2Outcome == .none {
+            p2Outcome = Blackjack.resolveOutcome(player: p2.cards, dealer: pvpDealer.cards)
+        }
+    }
+
+    // MARK: - Head-to-Head Actions
+
+    private func h2hNewRound() {
+        h2hDeck = Deck()
+        h2hPlayer = Hand()
+        h2hDealer = Hand()
+        h2hOutcome = .none
+        h2hPlayerStood = false
+        h2hDealerStood = false
+        h2hTurn = .player
+
+        // Initial deal: Player, Dealer, Player, Dealer
+        if let p1 = h2hDeck.deal() { h2hPlayer.add(p1) }
+        if let d1 = h2hDeck.deal() { h2hDealer.add(d1) }
+        if let p2 = h2hDeck.deal() { h2hPlayer.add(p2) }
+        if let d2 = h2hDeck.deal() { h2hDealer.add(d2) }
+    }
+
+    private func h2hPlayerHit() {
+        guard h2hPlayerCanAct, let card = h2hDeck.deal() else { return }
+        h2hPlayer.add(card)
+        if h2hPlayer.isBusted {
+            h2hOutcome = .playerBust
+        }
+    }
+
+    private func h2hPlayerStand() {
+        guard h2hOutcome == .none && !h2hPlayerStood else { return }
+        h2hPlayerStood = true
+        h2hTurn = .dealer
+    }
+
+    private func h2hDealerHit() {
+        guard h2hDealerCanAct, let card = h2hDeck.deal() else { return }
+        h2hDealer.add(card)
+        if h2hDealer.isBusted {
+            h2hOutcome = .dealerBust
+        }
+    }
+
+    private func h2hDealerStand() {
+        guard h2hOutcome == .none && !h2hDealerStood else { return }
+        h2hDealerStood = true
+        h2hSettleIfNeeded()
+    }
+
+    private func h2hSettleIfNeeded() {
+        guard h2hOutcome == .none else { return }
+        // Do not settle while dealer must push (dealer total < 17)
+        if dealerMustPush {
+            dealerPlay()
+            settle()
+            return
+        }
+        if h2hPlayerStood && h2hDealerStood {
+            h2hOutcome = Blackjack.resolveOutcome(player: h2hPlayer.cards, dealer: h2hDealer.cards)
         }
     }
 }
@@ -581,3 +1103,4 @@ private struct CloseSheetButton: View {
 #Preview {
     ContentView()
 }
+
